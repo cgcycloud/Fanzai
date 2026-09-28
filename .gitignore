@@ -11,3 +11,5 @@ data_local/
 models/vosk-model-small-cn-0.22/
 .DS_Store
 .pytest_cache/
+!models/*.onnx
+!models/**/*.onnx
