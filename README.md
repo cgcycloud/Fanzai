@@ -1,4 +1,4 @@
-﻿# 饭崽（Fanzai）
+# 饭崽（Fanzai）
 
 面向老年人的 AI 正念饮食陪伴项目，可在 Windows 开发环境和树莓派运行。项目通过摄像头识别进食状态，以语音和屏幕提供陪伴，并记录饮食与健康数据。
 
@@ -37,7 +37,7 @@ sudo systemctl start mindful-meal
 sudo systemctl status mindful-meal
 ```
 
-部署脚本会安装系统与 Python 依赖并配置服务。树莓派硬件支持及配置见 [`deploy/`](deploy/) 和 [`docs/`](docs/)。
+部署脚本会安装系统与 Python 依赖、从仓库复制模型到 `/data/models` 并配置服务。树莓派硬件支持及配置见 [`deploy/`](deploy/) 和 [`docs/`](docs/)。
 
 ## 模型与数据
 
