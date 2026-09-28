@@ -1,15 +1,41 @@
-# 饭崽（Fanzai）
+﻿# 饭崽（Fanzai）
 
-面向老年人的 AI 正念饮食陪伴项目，可在 Windows 开发环境和树莓派运行。项目通过摄像头识别进食状态，以语音和屏幕提供陪伴，并记录饮食与健康数据。
+饭崽是面向老年人正念饮食场景的陪伴项目：摄像头观察进食过程，麦克风接收语音，应用将视觉与对话结果用于屏幕提示、语音反馈、饮食记录和健康分析。可在 Windows 上开发和体验 Web 界面，也提供树莓派摄像头、音频、GPIO 和圆屏的适配。它是辅助工具，不替代医疗诊断或护理。
 
-## 功能
+## 项目如何工作
 
-- 咀嚼、手口送食、情绪和食物识别
-- 中文语音唤醒与离线语音识别
-- AI 对话、语音播报、饮食记录和健康报告
-- 树莓派摄像头、GPIO 与圆屏支持；无硬件时可使用模拟模式
+```text
+摄像头 ──> app/vision（人脸/表情、手口动作、咀嚼、食物） ─┐
+麦克风 ──> app/voice（唤醒词、语音识别、语音合成） ───────┼─> app/core（状态、进食事件、记忆、健康数据、AI）
+硬件 ────> app/hardware（真实设备或模拟设备） ────────────┘                 │
+                                                                            ├─> app/api + app/web（浏览器交互与看板）
+                                                                            └─> app/display（圆屏画面与输出）
+```
+
+`app/main.py` 是命令行入口，`app/server.py` 组合 Web 服务和各 API 路由。`app/config.py` 集中定义模型、数据与运行参数。系统既有本地推理和规则逻辑，也有可选的云端 AI 服务；**仓库包含模型文件不等于所有功能都能离线使用**。
+
+### 主要目录
+
+| 路径 | 作用 |
+| --- | --- |
+| `app/vision/` | 摄像头画面、咀嚼及手口动作、情绪和食物相关处理 |
+| `app/voice/` | 本地唤醒词、Paraformer 语音识别、语音合成及缓存 |
+| `app/core/` | 进食状态、对话、记忆、SQLite 数据、统计与清理 |
+| `app/api/`、`app/web/` | 对话、视觉、音频、报告、设置等接口与静态网页 |
+| `app/hardware/`、`app/display/` | 树莓派外设/模拟设备及显示输出 |
+| `models/` | 随仓库提供的 ONNX 和 MediaPipe 模型资产 |
+| `deploy/` | 树莓派安装脚本与 systemd 服务文件 |
+| `tests/`、`docs/` | 自检和补充文档 |
+
+### 本地与云端能力
+
+- 本地模型用于语音唤醒、中文语音识别以及部分视觉处理。模型文件较大，克隆仓库需要足够空间和下载时间。
+- AI 对话、云端视觉理解和云端语音合成取决于所配置的服务、网络及 API Key；未配置时这些能力不可用或退回本地提示/规则路径。
+- 实际摄像头、麦克风、扬声器、GPIO 和圆屏是否可用取决于设备与系统依赖；没有硬件时可以使用项目中的模拟实现开发部分功能。
 
 ## Windows 快速开始
+
+需要 Python 3.10 或更高版本。进入仓库根目录，在 PowerShell 中运行：
 
 ```powershell
 python -m venv .venv
@@ -18,42 +44,50 @@ python -m venv .venv
 .venv\Scripts\python -m app.main serve --port 8765
 ```
 
-浏览器访问 <http://127.0.0.1:8765>。也可运行 `run.bat` 自动准备环境并启动。
+浏览器打开 <http://127.0.0.1:8765>。也可运行 `run.bat` 来准备环境并启动。硬件自检与业务功能测试不同：缺少某项外设并不代表 Web 服务无法启动。
 
 ## 树莓派部署
 
-在树莓派上克隆仓库并运行部署脚本：
+在树莓派上（不是 Windows PowerShell 中）执行：
 
 ```bash
-git clone https://github.com/cgcycloud/Fanzai.git /opt/mindful_meal
+sudo git clone https://github.com/cgcycloud/Fanzai.git /opt/mindful_meal
 cd /opt/mindful_meal
 sudo ./deploy/setup_pi.sh
-```
-
-启动服务：
-
-```bash
+./.venv/bin/python tests/selfcheck.py
 sudo systemctl start mindful-meal
 sudo systemctl status mindful-meal
 ```
 
-部署脚本会安装系统与 Python 依赖、从仓库复制模型到 `/data/models` 并配置服务。树莓派硬件支持及配置见 [`deploy/`](deploy/) 和 [`docs/`](docs/)。
+安装脚本安装系统和 Python 依赖、创建树莓派自己的 `.venv`、将仓库的模型复制到 `/data/models`、注册开机服务；**脚本不会自动启动服务**。完成后从同一网络中的浏览器访问 `http://<树莓派实际IP>:8765`。配置和连接外设请参考 [`deploy/`](deploy/) 与 [`docs/`](docs/)；部署仍需根据具体硬件测试，不能把 Windows 上的虚拟环境直接搬到树莓派。
 
-## 模型与数据
+## 数据、配置与安全
 
-推理模型放在 [`models/`](models/) 并随仓库提供。`.venv` 不纳入版本控制；在目标设备按依赖清单重新创建即可。运行数据、数据库、日志和 API 配置保存在 `data_local/`（树莓派为 `/data/`），不会提交到仓库。
+Windows 上的运行数据保存在仓库下的 `data_local/`；树莓派安装后的数据放在 `/data/`，模型优先从 `/data/models` 读取。数据库、媒体文件、日志以及 AI 配置属于运行数据，不随仓库公开。`.venv/` 也不上传：它包含针对当前系统安装的依赖，应在目标设备重新创建。
 
-AI 云端对话、视觉或语音服务需自行配置相应 API Key；不配置时部分云端能力不可用。请勿将密钥提交到 GitHub。
-
-## 常用命令
+可通过 Web 设置或命令行配置 AI 服务，例如：
 
 ```bash
-python -m app.main self-test       # 硬件自检
-python -m app.main init-db         # 初始化数据库
-python -m app.main transcribe a.wav
-python -m app.main weekly-review
+python -m app.main ai-config --api-url <服务地址> --model <模型名> --api-key <你的密钥>
 ```
 
-## 许可与模型来源
+请只在自己的设备上填写密钥，**不要把真实密钥、私钥、运行数据或个人健康记录提交到公开仓库**。需要使用云端功能时，还应检查所选服务的数据处理条款。
 
-项目代码及第三方组件、模型分别遵循各自许可。使用或再分发前请查阅对应上游项目的许可与使用条款；模型来源说明见项目文档及模型目录。
+## 常用检查命令
+
+在当前系统已激活的 Python 环境下，从仓库根目录运行：
+
+```bash
+python -m app.main self-test          # 摄像头、音频、GPIO 等硬件自检
+python -m app.main init-db            # 初始化数据库
+python -m app.main transcribe a.wav   # 本地识别音频文件
+python -m app.main wake-test a.wav    # 用音频文件测试唤醒词
+python -m app.main weekly-review      # 输出健康周报 JSON
+python -m app.main analytics          # 输出健康分析 JSON
+```
+
+树莓派若未激活虚拟环境，将上述命令中的 `python` 换成 `./.venv/bin/python`；Windows 则可用 `.venv\Scripts\python`。服务没有正常启动时，可检查 `sudo systemctl status mindful-meal` 和 `/data/logs/` 中的日志。
+
+## 模型与许可
+
+仓库为便于部署包含第三方模型资产；项目代码、依赖和各模型**可能适用不同的许可和使用条款**。公开上传并不代表已替所有第三方资产核实再分发、商业用途或其他授权。使用、再分发或商用前，请分别核查相关上游来源及许可。
