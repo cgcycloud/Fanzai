@@ -1,0 +1,16 @@
+[project]
+name = "mindful-meal"
+version = "2.0.0"
+description = "正念饭崽 —— 面向慢病人群的 AI 正念饮食干预助手（树莓派）"
+requires-python = ">=3.10"
+readme = "README.md"
+
+[project.scripts]
+mindful-meal = "app.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.setuptools]
+packages = ["app"]

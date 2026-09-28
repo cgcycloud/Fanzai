@@ -1,0 +1,9 @@
+{
+  "bite_dist_ratio": 1.5,
+  "bite_leave_sec": 0.6,
+  "bite_refractory_sec": 1.5,
+  "chew_fast_threshold": 30.0,
+  "chew_slow_threshold": 15.0,
+  "chew_prob_threshold": 0.5,
+  "head_motion_threshold": 4.0
+}

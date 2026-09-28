@@ -1,0 +1,52 @@
+{
+  "version": "2.0",
+  "ml": {
+    "means": [
+      0.089166,
+      0.04659,
+      0.023406,
+      0.108008,
+      0.027391
+    ],
+    "stds": [
+      0.154423,
+      0.067142,
+      0.059748,
+      0.215921,
+      0.046301
+    ],
+    "w": [
+      1.674877,
+      -1.417153,
+      0.944652,
+      -1.325774,
+      -0.909546
+    ],
+    "b": -0.251881
+  },
+  "thresholds": {
+    "jaw_v": 0.01,
+    "jaw_width": 0.01,
+    "masseter_area": 0.01,
+    "temporalis_d": 0.01,
+    "lip_openness": 0.01
+  },
+  "lip_max_open": null,
+  "vote_gate": 0.55,
+  "pattern_threshold": 5,
+  "enough_frames": 5,
+  "cooldown": 0.45,
+  "stats": {
+    "frames": 14531,
+    "pos_frames": 5011,
+    "neg_frames": 9520,
+    "chew_marks": 700,
+    "train_acc": 0.675,
+    "recall": 0.8122,
+    "precision": 0.5183,
+    "false_alarm": 0.3973,
+    "click_interval_median_s": 0.4808,
+    "duration_frames": 5
+  },
+  "trained_at": "2026-09-11 20:21:50"
+}

@@ -1,0 +1,18 @@
+[Unit]
+Description=Mindful Meal (正念饭崽) - 正念饮食慢病干预助手
+After=network.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/.venv/bin/python -m app.main serve --host 0.0.0.0 --port 8765
+Restart=always
+RestartSec=5
+StandardOutput=append:/data/logs/mindful-meal.log
+StandardError=append:/data/logs/mindful-meal.err
+Environment=PYTHONUNBUFFERED=1
+Environment=MINDFUL_SHOW_VISION_WINDOW=0
+
+[Install]
+WantedBy=multi-user.target

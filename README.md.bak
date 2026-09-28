@@ -1,0 +1,772 @@
+# 正念饭崽 · mindful_meal
+
+面向老年慢病人群（高血压、糖尿病等）的 **AI 正念饮食干预机器人**。
+摄像头捕捉咀嚼与情绪 → 语音陪伴引导正念进食 → 记录并生成个性化健康文档。
+
+---
+
+## 一、功能总览
+
+| 模块 | 能力 |
+|---|---|
+| **摄像头感知** | 咀嚼次数/频率（面部肌肉特征法，医学标准 15–30 次/分为正常）、头部移动抑制误计、手口送食与进食速度、分心物、食物残留占比、运动检测 |
+| **情绪识别** | HSEmotion 8 类情绪 + 效价/唤醒度 + 16 种状态词 + 微表情事件（本地 ONNX，无需联网）；FER+ 备用；GLM-4V 云端视觉兜底 |
+| **机器人表情** | 11 种卡通表情 PNG（happy/sad/angry/surprise/neutral/love/sleepy/cool/cry/wink/shy），根据 AI 回复自动切换，也可手动点选；同时叠加到视频帧右上角 |
+| **AI 交流** | 餐前 6 步 → 餐中 5 步 → 餐后 3 步共 16 状态正念引导；流式回复（首句约 1–3 秒可听）；结合情绪/饥饿/饱腹/速度给出提醒，慢病场景提示遵医嘱 |
+| **语音** | 唤醒/识别/发声**全部本地离线**（sherpa-onnx / k2-fsa）：唤醒 = KWS 中文关键词模型（说「你好饭崽」即唤醒，两字词也支持）；识别 = Paraformer 中文（15.9 秒语音解码 0.26 秒）；**发声 = Kokoro-82M（权重 Apache-2.0，✅ 可商用），24kHz，CPU 上 0.46× 实时**，设置面板可选引擎与音色编号并当场试听；**说完自动发送**（浏览器端音量检测，静音 0.85 秒即断句）也可手动点 ⏹；**唤醒词在任何自主互动模式下都有效**，机器人说话时喊它可直接打断 |
+| **饮食日志** | SQLite 记录对话/用餐/情绪/送食/咀嚼/体重等事件；4 周周报（用餐数、平均间隔、情绪性进食占比、语速、体重趋势、依从性评分 0–100） |
+| **风险预警** | 连续 3 天语速 >140 字/分（焦虑倾向）或 <100（低落倾向）；90 天体重波动 >5%；进食窗口 >12h 连续 3 天；21 点后宵夜 |
+| **复查计划** | 三阶段：强化期（0–3 月，每 14 天）→ 巩固期（4–6 月，每 30 天）→ 维持期（7–12 月，每 90 天） |
+| **个性文档** | `/api/personal-doc` 生成 Markdown 专属报告（总览 + 风险 + 复查 + 个性化总结），看板页可直接阅读 |
+| **食物热量** | 内置 55 种中餐热量库（kcal/100g + 平均密度）；像素占比 → 重量 → 热量估算；GLM-4V 拍照识别接口（预留，无需训练模型即可用） |
+| **硬件** | 自动探测：树莓派真机（picamera2 / arecord / aplay / GPIO）↔ Mock 回退；GC9A01 圆屏状态显示；事件可选云端上传 |
+| **设备屏**（2.8 寸横屏，也是默认前端） | **整屏即设备屏**：表情页用 [agent-robot-avatar](https://github.com/CX-ArtLab/agent-robot-avatar) 组件（SVG 矢量、14 种 Agent 状态、眨眼/视线/果冻物理）与语音流程同步；摄像头/健康数据页为服务端渲染彩色卡片页（MJPEG ~29fps 实况，可上下滑动） |
+
+## 二、快速开始（Windows 本地）
+
+```bash
+# 1) 依赖（首次）
+python -m venv .venv
+.venv/Scripts/pip install -r requirements.txt
+
+# 2) 自检（11 步：模块/数据库/状态机/加密/分析/视觉/ASR/唤醒/发声/API/设备屏）
+.venv/Scripts/python tests/selfcheck.py
+
+# 3) 启动服务
+.venv/Scripts/python -m app.main serve --port 8765
+# 浏览器打开 http://127.0.0.1:8765
+```
+
+> Windows 上也可以直接双击 **`run.bat`**：它会自动建虚拟环境、装依赖、**轮询 `/api/health`
+> 等服务真正就绪后**再打开浏览器（冷启动要加载 ASR/KWS/TTS 模型，固定延时不可靠），
+> 并在启动前提示"端口是否已被上次的服务占用"。
+
+**页面一直卡在「正在连接设备屏…」怎么办**（这个坑踩过，原因有两层）：
+
+1. **服务没起来** → 浏览器却用缓存的页面渲染，于是只看到加载遮罩、看不到真正的连接错误。
+   现在 `/`、`/admin` 与自研 JS/CSS 一律 `Cache-Control: no-store`，不会再出现"缓存旧页面"。
+   同时 `index.html` 加了兜底：脚本 6 秒没跑起来就直接提示 **按 Ctrl+F5** 并说明去看启动窗口的报错。
+2. **浏览器拿着旧的 `device_ui.js`** → 改了代码不生效、行为诡异。现在 JS/CSS 已禁缓存，
+   并且 `init()` 一开始就会置 `window.__dshBooted = true`（兜底提示据此判断是否真的启动了）。
+
+排查顺序：先看启动窗口有没有 `Uvicorn running on ...`；再用
+`tools/check_cache_headers.py`（缓存头）、`tools/diag_stuck_loading.py`（页面状态与 JS 报错）
+确认，二者都不需要看代码。
+
+**不配置 AI Key 也能完整跑通**：对话走本地规则回复，语音播报由本地 sherpa 音色合成（离线）、感知全部本地模型。
+
+### 语音对话怎么用
+
+1. 点输入框左边的 🎤（浏览器会询问麦克风权限，需允许）
+2. **直接说话，说完自动发送** —— 不需要再点一次；也可以点 ⏹ 立即结束
+3. 说话时状态栏会显示实时音量条「🎙 已听到你说话 ▮▮▮▯▯▯▯▯（停下后自动发送）」，
+   确认麦克风确实在收音；停下约 0.9 秒后自动发送
+4. 状态栏随后显示「识别中…」→ 识别文本（带耗时与引擎名）
+5. 回复文本立刻显示，语音随即播放
+
+**静音检测（VAD）说明**：录音开始会先用 400ms 标定环境底噪（取 25 分位并夹到 5~25），
+再用「连续 3 帧超过底噪」确认开始说话、连续 **0.85 秒**低于底噪确认说完。
+这个阈值不能小：中文自然语流里 600~800ms 的换气停顿很常见，阈值太小会把一句话
+从中间切断（前半句先发出去、后半句又成了一轮），表现就是"前一句没说完后一句插进来"。
+录音上限 8 秒是兜底（正常情况下不会触发）。若一直没自动发送，说明环境噪声较大，
+可直接点 ⏹ 手动发送。
+
+**噪声与插话防护**（应对嘈杂环境、"它乱接话"）：
+| 机制 | 作用 |
+|---|---|
+| 唤醒端自适应噪声门 | 只上传"明显高于环境底噪"的片段，静音不发请求；底噪 = 最近约 8 秒**所有帧**电平的 20 分位 ×1.8，随环境自动升降（说话只占少数时间，低分位仍稳定落在环境噪声上；曾经只统计"安静帧"，结果环境噪声一高于初始底噪就被判成"一直有人在说话"，门再也关不上） |
+| KWS 专用唤醒模型 | 只认配置的唤醒词（拼音级匹配），无关语音/噪声不会命中；不再需要"短词严格判定"那种补丁 |
+| 每分钟唤醒上限 | 60 秒内最多唤醒 5 次，噪声环境下兜住"被反复刷醒" |
+| 说话时长校验 | 真正"有人在说话"不足 450ms（咳嗽/器皿碰撞）判为噪声，不送识别 |
+| 一轮互斥 + 可打断 | 两路对话流互斥（`_dlgBusy`），回复不会互相插入；用户喊唤醒词可**明确打断**（中断 SSE、清空播放队列），且用轮次编号保证被打断那轮的收尾不会污染新一轮 |
+| 连续模式余量 | 播报结束后留 350ms 再开麦，避免把上一句尾音当成新的一句话 |
+
+**响应速度**（实测，本机）：从"用户说完"到"听见机器人出声"，
+由 VAD 等待 + 识别 + 大模型首字 + 首句 TTS 组成。**旧链路的瓶颈是云端 TTS**
+（edge-tts 单句 1.7 秒常态、偶发限流到 11.5 秒；智谱接口 1.5~6.8 秒），
+换成本地 sherpa 合成后这一环降到百毫秒级（Matcha 22.05kHz 平均 153ms/句）。
+> 注意：**发声已改成可商用的本地 Kokoro**（见下文"发声选型"）：24kHz、离线、
+> 5 秒音频约 2.3 秒合成（0.46× 实时）；唤醒应答等固定短句走缓存，所以"喊醒它到它应一声"仍是秒回。
+
+| 环节 | 旧（edge / 智谱云端） | 本地 sherpa 合成 |
+|---|---|---|
+| 说 → 听见第一声（即时回应，缓存） | 5.4~5.6 秒 | **0.05~0.11 秒** |
+| 单句 TTS 合成 | 1.7 秒（抖动 1.1~11.5 秒） | **0.04~0.30 秒**（Matcha 22kHz，平均 153ms） |
+| 大模型首字 | 1.4~3.4 秒（未变） | 1.4~3.4 秒 |
+| 整轮说完 | 8.9~19.3 秒 | **5.5~6.4 秒** |
+| 静音断句等待 | 0.85 秒 | 0.85 秒 |
+
+做法：
+1. **换本地 TTS**（sherpa-onnx）：不再受免费接口限流影响，延迟稳定。
+2. **即时回应**：回复是动态文案没法缓存，但"接住等待"的话可以 ——
+   启动时预热 4 条口语回应（`ACK_TEXTS`，如「嗯，我在听。」「让我想想。」），
+   说完立刻随机播一条（缓存命中，实测 30~110ms），大模型的话随后接上。
+   多条随机 + 每轮打散，避免"每轮同一句"的模板感。
+3. **TTS 并行度 2 → 4**、**逗号处提前断句阈值 10 → 6 字**：让首句更早、整段更快。
+   （静音断句保持 0.85 秒 —— 曾试过收到 0.6 秒，结果中文换气停顿被切断成两轮，
+   详见下文"噪声与插话防护"）
+
+> **音色**：默认 **Kokoro-82M（Apache-2.0，可商用）**，24kHz 纯本地。
+> 想用微软晓晓（更自然但要联网、且走 Edge 朗读的非官方接口）可在设置面板切「云端晓晓」；
+> 追求最快可切 Matcha（22kHz，但训练数据仅限非商用）。
+
+**"有文字但没声音"怎么查**（两类原因都踩过）：
+
+1. **容器格式标错**：本地合成一律出 WAV（16k/22.05k/24k 都是 RIFF 头）、旧缓存里可能还有 MP3，
+   后端必须按**实际字节**报 `format`
+   （`voice/tts.py::detect_format`），前端据此选 MIME。曾有一处 ACK 事件硬编码 `format="mp3"`
+   而内容是 WAV —— 前端用错 MIME，播放静默失败。
+2. **浏览器自动播放策略**：页面没有用户交互时 Chromium 会拒绝 `play()`（`NotAllowedError`）。
+   处理方式：
+   * **唤醒期间不释放麦克风**：Chromium 对"正在采集麦克风的页面"会放行自动播放，
+     所以应答「我在」是在唤醒监听仍持有麦克风时播出的，不需要用户点屏幕；
+   * **兜底**：真被拦下时把这段音频放回队列（不丢内容），状态栏显示
+     `🔇 点一下屏幕开启声音`，用户任意点击后自动补播；
+   * **不再静默**：解码/播放失败会显示 `⚠ 音频播放失败(code N)` 并打 console 警告
+     （这个 bug 当初就是被 `play().catch(done)` 静默吞掉、查了很久）。
+
+排查音频是否真的在播，可用 `tools/diag_audio_playback_flow.py`（钩住 `HTMLMediaElement.play`
+逐次报告播放/拒绝/出错）与 `tools/check_audio_unlock.py`（确定性模拟"被拦 → 提示 → 补播"）。
+
+### 语音唤醒（说「你好饭崽」直接喊醒）
+
+**不用点屏幕**：设备屏页常开监听麦克风，说「你好饭崽」即自动进入聆听，
+说完自动发送；默认「单句」模式，也可在设置面板切成「连续」模式多轮对话。
+开关与模式都在**第一页下滑设置面板**里（设备屏默认开启，可关）。
+
+- **唤醒词**：默认 `你好饭崽` / `你好正念`（存在 `data_local/agent_settings.json`）。
+  刻意**不含两字词**（如「饭崽」）：两字词谐音太多，嘈杂环境下容易被误唤醒；
+  确实想用可以自行加进词表，判定会自动走更严格的短词规则（最终结果 + 更高置信度 + 基本是整句）
+- **唤醒应答**：命中后先回应一声**「我在」**（启动已预合成，缓存秒回），
+  **播完才打开麦克风收音** —— 顺序不能反，否则应答会被自己的麦克风录进去
+- **单句模式**：唤醒 → 应一声「我在」→ 听一句 → 回到待唤醒
+- **连续模式**：唤醒后持续对话，说「再见/拜拜/不聊了/结束对话/不用了」或一轮没听清即结束
+- **命中反馈**：头像切到「说话/聆听」+ 底部状态栏「🔔 已唤醒 · 我在听」+ 应答语音
+
+判定在服务端（`app/voice/sherpa_kws.py`），浏览器只负责把 16k 单声道 PCM 每 450ms 推一片
+到 `/api/agent/wake/feed`。麦克风**只由浏览器一个持有者使用**：待唤醒时占用一次
+`getUserMedia`，命中后先释放再录音，说完自动恢复监听，不会两个流抢麦；
+AI 播报与录音期间不判唤醒，避免听到自己的声音自问自答。
+
+**唤醒与识别**用 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)（k2-fsa），完全本地；
+**发声**默认用本地的 Kokoro（可商用），其余引擎按需切换：
+
+| 环节 | 模型 | 说明 |
+|---|---|---|
+| **唤醒**（KWS） | `sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01` | 中文关键词唤醒专用，建模单元=拼音，int8 仅 4.7MB，流式低延迟 |
+| **语音转文字** | `sherpa-onnx-paraformer-zh-small`（int8） | 15.9 秒语音解码 0.26 秒，比 Vosk-small 快 60~100 倍 |
+| **文字转语音** | `kokoro-multi-lang-v1_1`（默认，Apache-2.0）+ Matcha / VITS / edge 可选 | 默认本地 24kHz，实测 0.46× 实时、离线；详见下表与"发声选型" |
+
+### 发声选型：为什么默认是 Kokoro（可商用是硬要求）
+
+需求是"最自然 + 语言流畅 + **可免费商用**"，所以许可先过筛，再比质量与速度：
+
+| 音色 | 引擎 | 输出 | 5 秒音频合成耗时 | 联网 | **商用许可** |
+|---|---|---|---|---|---|
+| **Kokoro-82M（默认）** | `kokoro-multi-lang-v1_1`（103 音色） | 24kHz WAV | **2.3 秒（0.46× 实时）** | 否 | ✅ **Apache-2.0，可商用/可再分发** |
+| Matcha | `matcha-icefall-zh-baker` + vocos | 22.05kHz WAV | 0.5 秒（0.10×） | 否 | ⚠️ **非商用**（训练数据 Baker 明确限非商用） |
+| 旧音色 | `vits-zh-hf-fanchen-C` | 16kHz WAV | 3.4 秒 | 否 | ❓ 许可不明（HF 社区数据集） |
+| VITS-LL | `sherpa-onnx-vits-zh-ll`（5 音色） | 16kHz WAV | 1.5 秒 | 否 | ❓ 模型包无 LICENSE、未说明数据来源 |
+| Piper 华研 | `zh_CN-huayan-medium` + espeak cmn | 22.05kHz WAV | **0.3 秒（0.05× 实时）** | 否 | ❓ MODEL_CARD 明写 License: Unknown |
+| 云端晓晓 | edge-tts（微软） | 24kHz MP3 | 1.2 秒 | 是 | ❓ 走 Edge 浏览器朗读接口，非官方授权 |
+
+**vits-zh-ll 与 Piper 华研**是用户点名要试的两套（都不是 sherpa-onnx 官方中文包里现成的默认选项）：
+
+* **`sherpa-onnx-vits-zh-ll`**：官方发行包（113MB，16kHz，5 个说话人），社区贡献、
+  用 VITS-fast-fine-tuning 训练。实测 5 个说话人里 **2/3/4 发音准确**（0 号把「念」念成「面」，
+  1 号声调错念成「年」），RTF 0.37~0.55。**模型包没有 LICENSE、也没写训练数据来源**，
+  商用有风险 —— 所以只作为可切换项，不是默认。
+* **Piper `zh_CN-huayan-medium`**：sherpa-onnx **没有打包中文 Piper 模型**
+  （官方只有英文 Piper：glados / libritts / lessac），所以这份是按官方
+  [Piper 转换流程](https://k2-fsa.github.io/sherpa/onnx/tts/piper.html)自己转的：
+  1. 从 piper 配置的 `phoneme_id_map` 生成 `tokens.txt`；
+  2. 给 onnx 写入元数据 `model_type=vits / comment=piper / voice=cmn / has_espeak=1`；
+  3. 配官方 `espeak-ng-data`（内含 `cmn_dict`，中文音素靠它）。
+  转换脚本：`python tools/convert_piper_zh.py`；模型下载：`python tools/download_extra_voices.py`。
+
+  实测结果很有意思：**22.05kHz、RTF 仅 0.05**（5 秒音频 0.27 秒合成，比 Kokoro 快约 10 倍，
+  树莓派上也能轻松实时），发音 95%（口音偏北方、语调偏平）。
+  但 MODEL_CARD 写明数据集 `PlayVoice/HuaYan_TTS` 的 **License: Unknown**，
+  且是**从英语 lessac（Blizzard2013，研究许可）微调**来的 —— 商用同样有风险。
+
+> 结论：这两套都能用、都很快（尤其 Piper 在树莓派上有明显优势），但**许可都不干净**，
+> 所以默认仍是 Apache-2.0 的 Kokoro。要按耳朵选：设置面板「AI 音色」里点一下切换、
+> 「🔊 试听当前音色」当场对比；也可以直接听
+> `data_local/media/voice-ab/` 里的样本（同一个句子，每套音色一份，用
+> `python tools/make_voice_samples.py` 重新生成）。
+
+排除过程：**edge-tts** 的晓晓音色确实最自然，但它走的是 Edge「大声朗读」的消费级接口
+（`speech.platform.bing.com/consumer/.../readaloud`，无需 Key、免费），既没有 SLA，
+也没授权用于产品化服务；**Matcha** 快得多但训练数据只允许非商用；
+**ZipVoice**（k2-fsa 的零样本克隆）训练数据 Emilia 同样是非商用。
+只剩 **Kokoro-82M**：权重随包附 Apache-2.0（`models/kokoro-multi-lang-v1_1/LICENSE`），
+可商用、可再分发，且 24kHz 音质明显好于旧的 16kHz VITS。
+
+**音色怎么挑的**（听感由你用面板「试听」定）：`tools/sweep_kokoro_voices.py` 把 v1.1 的
+**100 个中文音色全扫一遍**，用**拼音级** ASR 回环（同音字不算错）判发音准确度，再比合成速度：
+23 个音色发音 100% 准确；默认取 `sid=27`（zf_043）—— 语速最接近中位（4.74s / 中位 4.80s）、
+合成 0.46× 实时。面板另给 5 个候选（女声·最快 / 稍慢 / 4、男声·1 / 2）。
+
+> 树莓派注意：Kokoro 是 82M 参数的神经网络，Pi 4 上会比本机慢好几倍（本机 0.46× 实时）。
+> 想在 Pi 上流畅，用 `kokoro-int8-multi-lang-v1_1`（代码会自动回退，无需改配置），
+> 或换 Pi 5；也可以接受"合成比说话慢一点"（首句仍会先播，其余边播边合成）。
+
+> 云端连续失败两次会**熔断 2 分钟**（`app/voice/edge_tts_engine.py`），这期间直接走本地音色，
+> 不会每句话都白等一次网络超时。所以"有字就有声"是保证的，只是断网时会换音色。
+> 唤醒应答「我在」等固定短句是预合成的，切到云端**唤醒依旧秒回**。
+>
+> 想固定成本地音色（树莓派离线场景）：设置面板选一套离线的，或把
+> `app/core/interaction_config.py` 的 `DEFAULT_TTS_ENGINE` 改成 `"matcha"`。
+
+**本地音色的实现细节**（`app/voice/sherpa_tts.py`；模型放 `models/` 下，缺哪套就少哪个选项）：
+
+| 音色 | 模型 | 采样率 | 合成耗时 | 说明 |
+|---|---|---|---|---|
+| 自然女声（快）**默认** | `matcha-icefall-zh-baker` + 声码器 | 22.05kHz | **218ms/句**（RTF 0.10） | Matcha-TTS 非自回归，最快；配 `vocos-22khz-univ.onnx` 声码器 |
+| 自然女声（最佳） | `kokoro-multi-lang-v1_0` | 24kHz | 1662ms/句（RTF 0.68） | 音色最自然，模型 310MB，树莓派上偏慢 |
+| 旧音色（16kHz） | `vits-zh-hf-fanchen-C` | 16kHz | 1154ms/句（RTF 0.33） | 只作回退保留；16kHz 是"电话音质"，正是"声音很机械"的根源 |
+
+> 三套都过了 **ASR 回环**校验（合成 → Paraformer 转回文字，字符重合 ≥95%），
+> 所以"可懂度"是客观测出来的，不是听感描述。实测命令：`python tools/bench_tts_engines.py`。
+> **声码器必须单独下载**（Matcha 的模型包里没有，缺了这套音色直接不可用）：
+> `python tools/download_sherpa_models.py --vocoders-only`。
+
+**怎么换音色 / 试听**：设备屏第一页下滑设置面板 →「AI 音色」→ 点按钮切换，
+点「🔊 试听当前音色」当场听一句（`POST /api/agent/tts/preview`：只试听、不改设置，方便来回 A/B）。
+选择存在 `data_local/agent_settings.json` 的 `tts_engine`（`edge`/`auto`/`matcha`/`kokoro`/`vits`）：
+`auto` = 取第一个可用的本地音色（优先可商用的 Kokoro），本地都没有才用云端。
+设置面板下方还会出现**「音色编号」一行**（Kokoro 有 103 个说话人，面板列出 6 个中文候选，
+点一下即切换、点「🔊 试听当前音色」当场对比）。TTS 缓存键带引擎 + 模型目录 + 音色编号 + 语速，
+换音色不会播到旧音色的缓存；切换后会在后台预热固定短句（保存即生效，无需重启）。
+
+**为什么唤醒从 Vosk 换成 sherpa KWS**（旧实现踩过的坑）：`vosk-model-small-cn` 的词表里
+**没有「崽」**，导致「你好饭崽」这个唤醒词根本用不了：
+
+| 方式 | 「你好饭崽」的结果 | 结论 |
+|---|---|---|
+| Vosk 语法限制（更早的 WakeWordListener） | `你好 [unk]`，final 为空 | ❌ 永远无法命中 |
+| Vosk 自由识别 + 拼音容错（上一版） | `你好 贩 灾` | ⚠️ 靠拼音兜住，噪声里易误命中，两字词（饭崽）几乎不可用 |
+| **sherpa KWS（现在）** | `你好饭崽` ✅ | 专用模型，两字词也能用，无关语音零误触发 |
+
+自定义唤醒词的做法：把中文转成**拼音 token 行**写进会话即可（`app/voice/sherpa_kws.py`，
+用 `pypinyin` 自动转换并校验 token 是否在模型词表内）：
+
+```
+你好饭崽  →  n ǐ h ǎo f àn z ǎi @你好饭崽
+你好正念  →  n ǐ h ǎo zh èng n iàn @你好正念
+饭崽      →  f àn z ǎi @饭崽
+```
+
+模型缺失时唤醒不可用（`/api/agent/wake` 的 `engine`/`detector.error` 会说明原因），
+启动日志也会提示去跑 `python tools/download_sherpa_models.py`；不再有旧的 Vosk 回退。
+
+> 想离线验证唤醒词：`python -m app.main wake-test 音频.wav`（16k 单声道），
+> 命中会打印对应的唤醒词。日常使用走上面的浏览器唤醒（设备屏页常开监听）。
+
+**唤醒不灵时怎么查**：设备屏底部状态栏会实时显示唤醒状态与麦克风电平：
+
+| 状态栏显示 | 含义 | 处理 |
+|---|---|---|
+| `🎙 待唤醒（说「你好饭崽」）· 🎤 有声音` | 监听正常，且服务端确实收到了你的声音 | 若仍不命中 → 语速/距离，或到设置里换唤醒词 |
+| `🎙 待唤醒（说「你好饭崽」）· 🎤 很安静` | 收到了音频但电平很低 | 离麦克风近一点 / 检查系统输入音量 |
+| 一直不出现 `🎤` 字样 | 音频没上传（噪声门挡住或麦克风没采到） | 检查麦克风权限；用 `MINDFUL_WAKE_DEBUG=1` 落盘排查 |
+| `点一下屏幕以开启语音唤醒` | 浏览器要求先有用户交互才给麦克风 | 点一下屏幕（并在地址栏允许麦克风权限） |
+| 什么都没有 / 一直「未开启」 | 唤醒被设置面板关掉了，或麦克风不可用 | 下拉设置面板把「语音唤醒」打开（对应 `data_local/agent_settings.json` 的 `wake_enabled`）—— **验证脚本遇到这种情况会直接提示，不会含糊地报失败** |
+| 日志出现 `mode=mock/error` | 启动瞬间相机尚未就绪 | 属正常降级：先用模拟画面，**每 10 秒自动重试**真实摄像头；长期如此再查相机占用/权限 |
+
+**点屏幕也能结束/打断对话**：机器人正在说话或生成时，点一下屏幕＝打断（结束这一轮并退出连续对话）；
+空闲时点屏幕＝开始说话（若设置是连续模式，这一轮结束后会继续听）。打断后要再点一次或喊唤醒词，
+才会重新进入连续对话 —— 避免被打断后它自己接着说个不停。
+
+**绝不要用 PowerShell 改 UTF-8 文本文件**（本轮的血泪）：`Get-Content -Raw` 按系统 ANSI（cp936）
+读文件、`Set-Content -Encoding UTF8` 再写回，中文全成乱码；更糟的是**汉字最后一个字节会和紧跟的
+ASCII（`<`、空格、引号）被当成一个 GBK 双字节对一起丢掉** —— `</title>` 变成 `/title>`、
+index.html 里 JS 字符串少了收尾引号，页面直接白屏。改文本请用编辑器或本项目的 Python 工具
+（一律 UTF-8 读写）。`tests/test_device_ui_static.py` 现在守着这条：静态资源必须是无 BOM 的
+合法 UTF-8、无 U+FFFD、闭合标签完整。
+
+**后台终端中文乱码**：由 `run.bat` 统一设 `chcp 65001` + `PYTHONUTF8=1` 解决。
+**不要**在代码里把 stdout 重设成 `cp936`：Windows 控制台底层缓冲要求 UTF-8 字节，
+改成 GBK 后写出的字节会被按 UTF-8 解释，中文全花（这个坑在 `main.py` 与
+`chewing_engine.py` 里各写过一遍，现已移除）。
+
+状态栏数据来自 `/api/agent/wake` 的 `detector.last_level`（服务端收到的音频 RMS），
+因此"麦克风没收到声音"和"收到了但没命中"能直接分开。控制台还会打印每次命中的词。
+
+**唤醒词在任何自主互动模式下都能用**（包括机器人正在说话时）：播报/生成期间**不再屏蔽**唤醒，
+喊唤醒词即视为**明确要打断** —— 前端会中断当前的 SSE 流、清空播放队列、立刻转入收音
+（`abortDialogue()`，用轮次编号保证被打断那轮的收尾不会清掉新一轮的状态）。
+只有"正在收音"（麦克风被占用）和"设置面板打开"时才会忽略。
+
+**实测注意**：唤醒效果取决于麦克风质量。若你把设备屏跑在**带扬声器的笔记本**上，
+浏览器默认开启的回声消除会与系统音频处理叠加，近距离大音量外放时识别率会明显下降；
+真机（树莓派 + 独立麦克风）与正常说话距离下不受此影响。
+
+### 语音链路的自动化验证
+
+改唤醒/语音相关代码后，建议按下面顺序跑一遍（都在 `tools/`）：
+
+| 脚本 | 验证什么 |
+|---|---|
+| `check_wake_browser.py` | 正面：唤醒词 → 取到应答语音 → 自动收音 |
+| `check_wake_negative.py` | 反面：无关普通话语音 / 宽带噪声 **不得误唤醒**（并打印服务端听到了什么） |
+| `check_voice_turn.py` | 全链路：唤醒 → 应答 → 收音 → 识别 → 对话（会临时把自主互动调成 off 再恢复） |
+| `check_kws_module.py` | KWS 引擎本身：唤醒词命中 / 无关语音不命中 |
+| `bench_sherpa_tts.py` | 本地 TTS 合成耗时与音频时长 |
+| `bench_tts_engines.py` | **四套发声 A/B**：加载耗时 / 采样率 / 合成耗时 / RTF / ASR 回环可懂度（云端 MP3 无法本地解码，跳过回环） |
+| `check_tts_voice_api.py` | 运行中的服务：音色选项（含许可标注）、试听各音色、唤醒应答音频格式 |
+| `sweep_kokoro_voices.py` | 扫遍 Kokoro 全部中文音色，按**拼音级**发音准确度 + 速度排名（挑默认音色的依据） |
+| `bench_all_voices.py` | **全部 6 套音色统一评测**：采样率 / 语速 / 声调拼音准确度 / 许可（含首次合成预热修正） |
+| `make_voice_samples.py` | 用同一句话给每套音色生成试听样本 → `data_local/media/voice-ab/` |
+| `set_voice.py` | 命令行换音色：`python tools/set_voice.py piper` |
+| `check_new_voices_api.py` | 运行中的服务：vits-zh-ll / Piper 的试听是否可用 |
+| `convert_piper_zh.py` | 把 Piper 中文模型转换成 sherpa-onnx 可用的格式（含元数据与 tokens） |
+| `download_extra_voices.py` | 下载 vits-zh-ll 与 Piper 中文权重 |
+| `check_voice_panel_ui.py` | 设置面板「AI 音色」一行是否渲染正常（附截图，便于肉眼确认中文没坏） |
+| `bench_dialogue_latency.py` | 端到端延迟拆解：首字 / 首句语音 / 整轮 |
+| `diag_gate_intelligibility.py` | 噪声门是否损伤识别（门控前/后识别结果应一致） |
+| `diag_wake_upload.py` | 页面侧插桩：上传分片大小、底噪值、页面状态 |
+| `diag_audio_playback_flow.py` | 钩住 `HTMLMediaElement.play`：每次播放是成功/被自动播放策略拒绝/解码出错 |
+| `check_audio_unlock.py` | 自动播放被拦 → 保住音频并提示 → 点击后补播 |
+| `check_tts_amplitude.py` | 合成音频电平是否正常（排除"音频本身没声音"） |
+| `check_cache_headers.py` | 前端 HTML/JS/CSS 是否已禁缓存（防止拿旧脚本） |
+| `diag_stuck_loading.py` | 复现"卡在 正在连接设备屏…"：页面状态 + JS 报错 |
+| `test_kws_model.py` | 直接用模型自带音频验证 KWS 与关键词行生成 |
+
+> ⚠️ **写这类浏览器用例时最容易踩的坑**：只加 `--use-fake-ui-for-media-stream`
+> 和 `--use-file-for-fake-audio-capture=xxx.wav` **是不够的** —— 必须同时加
+> `--use-fake-device-for-media-stream`，否则 Chromium 仍然使用**真实麦克风**，
+> 注入的音频根本没被采集，测试会"通过"得毫无意义（本项目真的踩过：
+> 一份抗误唤醒报告因此是无效的，重新做才确认结论）。
+> 判断依据：若服务端 `detector.last_heard` 始终为空、却有大量上传分片，
+> 多半就是采到了真实环境噪声。
+
+排查"传了却识别不出"可开调试钩子（默认关闭）：`MINDFUL_WAKE_DEBUG=1` 启动服务，
+会把浏览器上传的原始 PCM 追加写到 `data_local/wake_debug.pcm`（16k 单声道 S16_LE，
+套个 WAV 头就能直接播放/识别）。
+
+实测耗时（本机，摄像头与感知线程全速运行）：
+
+| 环节 | 耗时 |
+|---|---|
+| 语音识别（6.5 秒语音） | **0.13 秒** |
+| 语音识别（15.9 秒语音） | **0.26 秒** |
+| 说 → 听见第一声（即时回应，缓存） | **0.03~0.45 秒** |
+| 大模型首字 | 1.4~1.7 秒 |
+| AI 首句开始播（本地 Matcha 22kHz） | 约 2.2~3.2 秒（大模型首字 + 单句合成） |
+
+### 识别引擎说明
+
+默认用 **sherpa-onnx + Paraformer 中文模型**（int8，82MB）：
+比原来的 Vosk-small 快 60~100 倍、准确率明显更高（Vosk-small 会把"粥"听成"中"）。
+旧的 Vosk 回退已从工程中移除：模型缺失时直接报错提示下载，不再静默降级。
+模型文件在 `models/sherpa-onnx-paraformer-zh-small/`（`model.int8.onnx` + `tokens.txt`）。
+
+切换引擎（`app/config.py`）：
+```python
+SHERPA_NUM_THREADS = 4     # 树莓派建议改 2；同时用于 KWS 与 TTS
+YIELD_VISION_DURING_ASR = True   # 识别期间暂停感知线程，避免 CPU/GIL 争抢
+
+# 语音唤醒与合成的引擎/模型（详见"发声选型"）
+# 发声统一入口在 app/voice/tts.py（默认本地 Kokoro，可商用；失败自动回落其它引擎）
+DEFAULT_TTS_VOICE = "zh-CN-XiaoxiaoNeural"   # 仅"云端晓晓"这个可选引擎用
+EDGE_TTS_TIMEOUT = 15.0                      # 云端单句超时；连续失败 2 次要熔断
+SHERPA_TTS_ENGINE = "auto"          # 本地回退用哪套：auto / "matcha" / "kokoro" / "vits"
+SHERPA_TTS_MATCHA_DIRNAME = "matcha-icefall-zh-baker"
+SHERPA_MATCHA_VOCODER = "vocos-22khz-univ.onnx"   # Matcha 的声码器（模型包里没有）
+SHERPA_TTS_KOKORO_DIRNAMES = ("kokoro-multi-lang-v1_1",      # 103 音色，最快
+                              "kokoro-int8-multi-lang-v1_1",  # 树莓派省内存/更小
+                              "kokoro-multi-lang-v1_0")       # 回退
+SHERPA_KOKORO_SID = 27               # 中文音色编号（面板「音色编号」行可改）
+KWS_THRESHOLD = 0.25       # KWS 命中阈值：调大更严、更少误触发
+KWS_SCORE = 1.0            # 关键词加成分：调大更容易命中
+```
+
+**模型下载**（一次即可，脚本支持 GitHub 代理，国内网络可用）：
+```bash
+python -m tools.download_models          # Paraformer 识别模型（82MB）
+python tools/download_sherpa_models.py   # KWS 唤醒（31MB）+ 三套音色 + 声码器
+python tools/download_sherpa_models.py --vocoders-only   # 只补声码器（51MB）
+```
+脚本会依次尝试 `gh-proxy.com / ghfast.top / ghproxy.net` 代理（GitHub Release 直连在国内常超时；
+实测 gh-proxy.com ≈650KB/s，而 ghfast.top 只有 ≈24KB/s，差 27 倍，所以放在第一个），
+解压到 `models/` 下：
+
+| 目录 | 用途 |
+|---|---|
+| `models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/` | 语音唤醒（KWS） |
+| `models/sherpa-onnx-paraformer-zh-small/` | 语音转文字（ASR） |
+| `models/matcha-icefall-zh-baker/` | 文字转语音（TTS，**默认音色**，22.05kHz） |
+| `models/vocos-22khz-univ.onnx` | Matcha 的声码器（模型包里没有，必须单独下） |
+| `models/kokoro-multi-lang-v1_1/` | 文字转语音（**默认音色**，103 说话人，24kHz，Apache-2.0） |
+| `models/kokoro-int8-multi-lang-v1_1/` | 同上 int8 量化版（树莓派首选，代码自动回退用它） |
+| `models/vits-zh-hf-fanchen-C/` | 文字转语音（旧音色，16kHz，回退用） |
+| `models/sherpa-onnx-vits-zh-ll/` | 文字转语音（社区 VITS，16kHz，5 说话人，许可不明） |
+| `models/piper-zh-huayan-medium/` | 文字转语音（Piper 中文 + espeak cmn，22kHz，许可 Unknown） |
+| `models/kokoro-multi-lang-v1_0/` | 文字转语音（最自然音色，24kHz，310MB，可选） |
+
+**为什么识别原来会慢到 15 秒**：视觉管线（帧循环 + 感知 + 手口检测）会大量占用 CPU 与 GIL，
+而识别又跑在事件循环上被饿死，实测同一段语音从 2.5 秒劣化到 11.5 秒。现在识别在工作线程里执行，
+并在识别期间暂停感知线程，双管齐下。
+
+**注意**：浏览器麦克风只在 `http://localhost` / `http://127.0.0.1` / `https://` 下可用。
+如果用 `http://<树莓派IP>:8765` 从别的电脑访问，浏览器会禁用麦克风 —— 需要在树莓派本机访问，
+或为服务配置 HTTPS。
+
+**关于音频格式**：本项目不依赖 pydub（Python 3.13 已移除其依赖的 `audioop`）。
+浏览器端已把录音转成 16k 单声道 WAV，后端用 numpy 自行重采样，**零外部依赖**。
+如需识别 webm/opus/mp3 等压缩音频，装 ffmpeg 即可（`sudo apt install ffmpeg`）。
+
+### 配置 AI（可选，用于真实对话与云端视觉）
+
+```bash
+.venv/Scripts/python -m app.main ai-config \
+  --api-url https://open.bigmodel.cn/api/paas/v4 \
+  --model glm-4-flash \
+  --api-key <你的Key>
+```
+或在网页「设置」页填写。**API Key 仅以 Fernet 加密落盘**（`data_local/ai_config.json` + `ai_config.key`，权限 600），前端永远读不到明文。
+
+也可用环境变量：`ZHIPU_API_KEY`（优先级最高）。
+
+## 三、命令行
+
+```bash
+python -m app.main serve            # Web 服务（对话/摄像头/看板/设置）
+python -m app.main self-test        # 硬件自检
+python -m app.main init-db          # 初始化数据库
+python -m app.main ai-config ...    # 配置 AI（Key 加密）
+python -m app.main ai-chat "你好"    # 单条对话
+python -m app.main tts "文本" --play # 文本转语音并播放
+python -m app.main transcribe a.wav # 本地识别（Paraformer）
+python -m app.main weekly-review    # 周报 JSON
+python -m app.main analytics        # 完整健康分析
+python -m app.main wake-test a.wav  # 离线验证唤醒词是否命中
+python -m app.main assistant        # 树莓派语音助手循环
+```
+
+## 四、树莓派部署
+
+```bash
+git clone <repo> /opt/mindful_meal && cd /opt/mindful_meal
+chmod +x deploy/setup_pi.sh && sudo ./deploy/setup_pi.sh
+```
+
+脚本会：装系统依赖（含 alsa-utils/ffmpeg/picamera2/lgpio）→ 建 venv → 装 pip 依赖 →
+下载 KWS/Paraformer/Matcha(+声码器)/VITS 模型到 `/data/models` → 复制感知模型 → 注册 systemd 服务。
+（Kokoro v1.1 fp32 与 int8 都会下载；int8 约 140MB，适合树莓派内存受限的场景。）
+
+```bash
+sudo systemctl start mindful-meal   # 启动
+sudo systemctl status mindful-meal  # 状态
+journalctl -u mindful-meal -f       # 日志
+```
+
+**路径规则**：树莓派数据在 `/data`（媒体 `/data/media`，库 `/data/user_health.db`），模型优先 `/data/models`，
+缺失时回退项目内 `models/`；Windows 本地全部落在项目 `data_local/`。
+
+### 硬件接线（与旧版一致）
+
+| 设备 | 说明 |
+|---|---|
+| 摄像头 | CSI 排线（picamera2）；USB 摄像头也可，自动回退 OpenCV |
+| 麦克风/喇叭 | ReSpeaker 2-Mic HAT，设备名 `plughw:seeed2micvoicec,0` |
+| 圆屏 | GC9A01 240×240 软件 SPI：MOSI=GPIO5, SCLK=GPIO6, CS=24, DC=25, RST=27 |
+| 按键 | 唤醒=GPIO16，确认=GPIO22，跳过=GPIO23（避开 ReSpeaker 占用的 GPIO17） |
+
+## 五、设备小屏（2.8 寸）与显示方案
+
+### 前端结构（默认前端 = 设备屏仿真）
+
+| 地址 | 说明 |
+|---|---|
+| `/` | **设备屏**：整屏就是这块 2.8 寸屏（240×320，等比放大），与硬件屏**像素级一致**。**左右滑动**（或方向键）切页；在表情页**轻触屏幕**即开始说话；在设置页**长按**唤出 AI 配置 |
+| `/admin` | 高级管理后台（摄像头卡片、健康看板、个性文档、食物识别）——屏幕装不下的深度信息在这里看 |
+| `/api/docs` | 交互式 API 文档 |
+
+也就是说：**平时看 `/` 就等同于看设备屏幕**，不需要接硬件。所有操作都在屏内完成——
+页面上没有额外的侧栏和按钮，因为真机上也只有一个屏（+ 一个 GPIO 按键）。
+
+### 为什么小屏不用 HTML
+
+| 方案 | 树莓派 | 单片机 | 说明 |
+|---|---|---|---|
+| 浏览器 / HTML | 可用（管理后台就是） | **不可用** | 驱动小屏要桌面环境或 kiosk，多占约 300MB 内存、开机慢十几秒 |
+| **服务端渲染 + 直写屏幕** | **推荐** | 不可用（Python 跑不了） | 无需浏览器，Lite 系统即可，开机几秒出画面 |
+| 树莓派渲染 + MCU 当显示从机 | 可选 | 可用 | 树莓派算好帧，通过串口/SPI 发给 MCU 屏，将来上单片机走这条路 |
+
+**结论**：管理后台继续用 HTML（浏览器访问方便）；设备的 2.8 寸屏走**服务端渲染**。
+同一个渲染结果有三个出口，换硬件只改一行配置，界面代码不动：
+
+```
+SCREEN_OUTPUT = "auto"   # auto(有 framebuffer 就用) / fbdev / spi / none
+SCREEN_FBDEV  = "/dev/fb1"        # fbtft 驱动的小屏（最省事，推荐）
+SCREEN_SPI_CONTROLLER = "st7789"  # 或 ili9341（直接 SPI 时用）
+SCREEN_W, SCREEN_H = 640, 480     # 高清横屏
+SCREEN_FPS = 30                   # 树莓派可降到 15
+SCREEN_BUTTONS = True             # GPIO 跳过键切页
+```
+
+### 三个页面（小屏放不下全部内容，改为切换）
+
+| 页 | 内容 |
+|---|---|
+| ① **表情主页**（黑底极简，占主体） | 插值表情 + **完整换行**的最近两轮对话（不截断，超长可滚动）+ 关键指标 |
+| ② 摄像头（彩色详细页） | 大画面 + 咀嚼/进食/人脸情绪/食物 数据卡，**上下滑动**查看 |
+| ③ 健康数据（彩色详细页） | 依从性大数字、KPI 卡、情绪分布条、风险预警、复查计划，**可滚动** |
+
+（设置类内容已从设备屏移除，统一在 `/admin` 高级后台调整。）
+
+- **左右滑动** → 切页（触屏/鼠标拖拽/方向键，树莓派按键 GPIO23，或 API）
+- **上下拖动 / 滚轮 / ↑↓** → 滚动页面内容（对话超长、详细页均支持，带滚动条）
+- **轻触表情页** → 说话
+
+**屏内交互**（真机与仿真一致）：
+- 表情页**轻触屏幕** → 开始录音；说完自动发送（静音 0.9 秒断句），也可以再点一下立即发送
+- 表情页**向下滑动** → 打开整页设置面板：亮度、音量、AI 语速、运行模式、自主互动级别、**语音唤醒（开关 + 单句/连续）**、时间校准；
+  **向上滑动**（或点「完成」）返回
+- 表情页顶部一行显示日期时间（浏览器本地时间）；面板里用**月/日/时/分/秒**手动校准，
+  偏移存在本机 localStorage，不经过后端接口
+- 设置页**长按** → 浏览器里唤出 AI 配置表单（真机无键盘，用 CLI 或 `/admin` 配置）
+- 出错提示会直接显示在屏幕底部（`POST /api/device/notice`）
+
+### 运行模式与自主互动
+
+参数集中在 **`app/core/interaction_config.py`**（可在真机上编辑后重启生效）：
+
+| 配置 | 取值 | 作用 |
+|---|---|---|
+| `MODES` | 进食检测 / 日常聊天 | 进食检测**开摄像头**并扮演「正念进食教练」；日常聊天**关摄像头**并扮演「日常陪伴伙伴」 |
+| `AUTONOMY_LEVELS` | 激进 / 正常 / 关闭 | AI 不等用户开口就主动说话的频率与触发条件（关闭=用户说话才回应） |
+| `TRIGGER_PROMPTS` | comfort/celebrate/chew_fast/eat_fast/checkin | 触发原因对应的提示词，决定"主动说什么" |
+| `BRIGHTNESS` / `VOLUME` / `SPEECH_RATE` | 20~100 / 0~100 / -50~50 | 下滑面板的可调范围（语速换算成 TTS 的 speed） |
+| `TTS_ENGINE_KEYS` / `DEFAULT_TTS_ENGINE` | auto / matcha / kokoro / vits | 下滑面板「AI 音色」的可选值与默认值 |
+| `WAKE` / `WAKE_MODES` | 开/关 · 单句/连续 · 唤醒词表 | **语音唤醒**：常开监听开关、唤醒后的对话模式、唤醒词与冷却时间（设置面板可调） |
+
+运行期选择保存在 `data_local/agent_settings.json`。自主互动的判定与发声在
+`app/core/autonomy.py`：它以设备屏两页同源的实时指标（情绪/咀嚼/进食）为依据，
+经 `/api/agent/proactive` 把文本、语音与表情推给设备页。
+
+### 对话内容：全部由 AI 生成
+
+回复文案不再来自本地规则或状态机脚本：状态机只负责推进「餐前/餐中/餐后」阶段与落库，
+话术完全由 AI 依据角色预设（`interaction_config.MODES` 的 `role_prompt`）现场组织，
+避免脚本与 AI 回复互相打架、听起来生硬。未配置真实 AI 时，接口会明确提示去配置，
+而不是用本地规则话术冒充对话。
+
+为了不让 AI 说成"模板腔"，还做了这些事：
+
+- 角色预设（`app/config.py::DEFAULT_SYSTEM_PROMPT`）只写身份、风格与专业边界，不写固定话术；
+  旧版把"场景应对原则"写死的提示词会在读取时自动升级（用户自己改过的不动）。
+- 只有真的点了「开始一餐」才注入用餐阶段，普通聊天不会被硬拉回"你饿了吗"。
+- 每次把上一轮的回答一起给模型，明确要求换一种说法，不复用同样的开头和句式。
+- 回复文案完全由模型组织，不复用同一句口头禅：生成期间的即时回应改用
+  **4 条候选随机播报**（`ACK_TEXTS`，见"响应速度"一节），既不模板化，又能立刻接住等待。
+
+### 进食模型的配置与重新训练
+
+| 想改什么 | 改哪里 |
+|---|---|
+| 送食灵敏度（指尖离嘴多近算一次）、快慢阈值、头动抑制 | `models/eating_thresholds.json`（不存在会自动生成） |
+| 手口检测采样频率 | `app/config.py` 的 `HAND_MOUTH_INTERVAL` |
+| 咀嚼概率模型（下巴/颌角/咬肌/颞肌的逻辑回归权重） | 重新训练 → `models/chewing_model.json` |
+
+重新训练（会打开摄像头；咀嚼时连续点按 `C`，按 `S` 预览训练结果，回车保存，`Q` 退出）：
+
+```bash
+.venv\Scripts\python.exe -m app.vision.chewing_engine --calibrate
+```
+
+保存位置就是 `models/chewing_model.json`（应用启动时加载，无需改代码）。
+调参前先用探针看真实数据，再决定往哪边调：
+
+```bash
+.venv\Scripts\python.exe tools\model_probe.py --seconds 60   # 看 mouth_dist_ratio / 送食次数
+```
+
+### 健康分析口径
+
+- **饮食依从性（0-100）**：情绪性进食占比 <30% 得 30 分；进食窗口超 12 小时的天数 <3 天得 25 分；
+  宵夜天数 <3 得 25 分；28 天里有 ≥24 天有用餐记录得 20 分。四项相加，上限 100。
+  用餐记录来自每餐结束时写入的 `food_residual` 事件。
+- **平均语速**：每次说话（`/api/asr`）都会记一条 `wakeword` 事件（识别字数 ÷ 语音时长），
+  取近 14 天平均——所以它会随着你说话而变化。
+- **情绪分布**：摄像头识别的情绪（`emotion_detect` 事件，感知线程按变化落库）
+  **加上**语速倾向（≥140 字/分记「焦虑倾向」，≤100 记「低落倾向」，其余记「平静」）合并统计。
+
+- **咀嚼次数**：设备屏第一页指标行显示「咀嚼 24/分 · 正常」和「累计 137 次」，
+  摄像头页的「咀嚼频率」卡片与后台实时感知卡片也带累计次数。
+  每分钟频率来自手口模型（认不出来时回退肌肉法）；累计次数由肌肉法检测器提供，
+  从服务启动开始累加。
+
+  说明：`次/分` 是**最近 60 秒内嚼了几下**的滑动窗口值——停止咀嚼后它必然在 1 分钟内
+  降到 0，这是定义如此，不是计数器被清零（累计次数只增不减）。前端每 600ms 刷新一次。
+
+### 吃完的判定与记录
+
+两条路都会**记一次进食**（`food_residual` 事件），并把这一餐前面的信息一起存下来：
+用餐时长、累计咀嚼次数/频率、进食速度、情绪、以及最近的对话片段。
+
+1. **用户自己说**：说「我吃完了 / 不吃了 / 吃饱了 / 结束了 / 谢谢」都算；
+   带否定保护——「还没吃完」「没有吃完」不会被误判成结束。
+2. **系统主动问**：连续 2 分钟咀嚼频率低于 5 次/分（且桌边检测到人脸）就主动问
+   「是不是已经吃完了」；用户只回一句「对 / 嗯 / 是的」也算吃完。
+
+参数在 `app/core/interaction_config.py` 的 `EATING_IDLE`：
+`chews_per_min`（阈值 5）、`sustain_sec`（持续 120 秒）、`cooldown_sec`（问过一次后 300 秒内不再问）。
+自主互动设为「关闭」时不会主动问（各互动级别的 `eating_idle_check` 开关）。
+
+### 进食 / 情绪模型自测
+
+怀疑「咀嚼次数、进食速度不生效」或情绪识别不稳时，跑模型探针（走生产同一套模型，
+只关掉云端 GLM-4V，避免调试产生外部请求）：
+
+```bash
+.venv\Scripts\python.exe tools\model_probe.py                # 摄像头采样 20 秒
+.venv\Scripts\python.exe tools\model_probe.py --seconds 60
+.venv\Scripts\python.exe tools\model_probe.py --video demo.mp4
+```
+
+它会检查模型文件是否齐备，逐次打印「人脸数 / 情绪 / 咀嚼·分 / 送食·分 / 指尖到嘴距离 / 头动」，
+并给出结论与排查建议，完整记录写入 `data_local/model_probe.json`。
+
+送食（进食次数）判定已改为「指尖进入嘴部范围记一次 + 必须离开过 + 冷却时间」，
+并把嘴边位置从"脸中心"修正为真实嘴心（上下内唇中点）、阈值放宽到 1.5 倍嘴宽。
+若探针里 `mouth_dist_ratio` 始终大于 1.5，说明手离嘴太远或关键点没跟上，可据此继续调参。
+
+### 表情：agent-robot-avatar 组件（与语音同步）
+
+表情层直接采用开源项目 **[CX-ArtLab/agent-robot-avatar](https://github.com/CX-ArtLab/agent-robot-avatar)**
+（v0.3.2，MIT；纯 SVG + 原生 JS 的 Web Component，运行时零依赖，
+已内置到 `app/web/static/vendor/agent-robot-avatar/`，离线可用）。
+
+组件自带：自动眨眼、视线与头部跟随、果冻拖拽形变、悬浮天线、`auto-sleep` 打盹、
+14 种 Agent 状态（idle/bored/waiting/input/send/success/failure/warning/inspect/blocked/error/surprise/sleep/wake）。
+
+与语音流程的映射（`app/web/static/js/device_ui.js` 的 `FaceStates`）：
+
+| 阶段 | 组件状态 | 语义事件（实测） |
+|---|---|---|
+| 待机 | `idle`（长时无操作自动 `bored`/`sleep`，有操作即醒） | — |
+| 用户说话 | `play('input')` | `input:start → input:cancel` |
+| 识别/生成中 | `startWaiting()` | `waiting:start → waiting:cancel` |
+| 播报回复 | `play('send')` | `send:start → send:end` |
+| 本餐结束 | `play('success')` | — |
+| 回复情感 | 开心→`success`、难过→`failure`、焦虑→`warning`、惊讶→`surprise` | — |
+| 出错 | `play('error')` | — |
+
+**显示架构说明**：表情页由浏览器直接渲染组件（SVG 矢量，任意分辨率都清晰、动画全程 GPU 合成）；
+摄像头/健康数据页仍是服务端渲染 MJPEG。因此真机上的 2.8 寸屏需要以 kiosk 模式跑一个浏览器
+（Chromium）来点亮表情页。旧的服务端 PIL 像素表情引擎已删除，表情只由 avatar 组件负责。
+
+组件代码 MIT 许可；机器人形象与视觉身份归 CX ArtLab 所有（README 原文声明，MIT 不转移角色版权）。
+
+渲染帧率 `SCREEN_FPS = 30`（详细页）；浏览器镜像走 **MJPEG 流**
+（`/api/device/stream`，JPEG 直推 + 帧序号去重，摄像头页实测 ~28.4fps）。
+管理后台摄像头流 `/api/vision/stream` 同样为 JPEG 直推 + 帧序号去重（无 base64
+往返），编码宽度/质量见 `VISION_JPEG_WIDTH` / `VISION_JPEG_QUALITY`。
+
+**摄像头帧率是相机限制，不是软件限制**：采集线程按相机原生速率抓帧（`read()` 自带
+一个帧周期的阻塞），编码线程事件驱动逐帧发布，因此流帧率 = 相机实际输出帧率。
+实测服务端采集与"裸 `cap.read()`"完全一致（同一时刻对照：裸相机 20.0fps，
+服务 20.0fps），说明管线没有额外损耗。注意**笔记本摄像头的帧率随环境光变化**：
+暗光下自动曝光会延长到 1/20s 把 30fps 拉到 20fps，这是硬件行为。
+`VISION_FRAME_FPS = 32` 只是上限保护值（相机比它快时才节流），不会限制相机。
+
+**说完话立刻有回应**：大模型生成 + 首句 TTS 合计要 3~5 秒，期间设备会先播一句
+缓存的即时回应（`ACK_AUDIO = True`，4 条候选随机选一条），让用户说完马上有反馈，
+而不是干等。这句只读缓存、绝不现场合成——没预热好就跳过，
+不为了"即时"反而增加延迟（实测现场合成可慢到 6 秒）。
+
+状态由语音流程自动驱动，无需手动干预；也可以在网页「设备屏」页点按钮预览任一表情。
+
+### 在树莓派上接小屏
+
+```bash
+# 方式 A（推荐）：用内核 fbtft 驱动，屏当 /dev/fb1 用，无需写 SPI 代码
+#   /boot/firmware/config.txt 加：
+#   dtoverlay=fbtft,spi0-0,ili9341,width=240,height=320,rotate=90
+#   重启后 ls /dev/fb* 应能看到 fb1；控制台不要占屏：sudo raspi-config → Console Autologin
+# 方式 B：直接 SPI（需要 spidev）
+sudo apt install python3-spidev
+#   配置 SCREEN_OUTPUT="spi"、SCREEN_SPI_CONTROLLER="st7789"/"ili9341"
+```
+
+没有硬件也能开发：Windows 上 `SCREEN_OUTPUT="none"`，打开网页「设备屏」页即可看到
+与设备**像素级一致**的实时画面（服务端渲染同一份帧）。
+
+## 六、架构
+
+```
+app/
+├── main.py            CLI 入口
+├── config.py          路径平台自适应 + 全部可调阈值（集中管理）
+├── server.py          FastAPI 应用工厂 + 静态托管
+├── api/               vision（快照/MJPEG/表情）· dialogue（SSE 流式）
+│                      audio（ASR/TTS）· report（周报/分析/个性文档）· settings（AI 配置/食物识别）
+├── core/              ai_client（流式+三级TTS+GLM-4V）· ai_config（Fernet 加密）
+│                      state_machine（16 状态）· memory（记忆压缩）· analytics · db · uploader
+├── vision/            hub（感知中枢）· emotion_engine/emotion_micro/emotion_model
+│                      chewing_engine/chewing · hand_mouth · food · emoji_overlay · service（四线程）
+├── voice/             asr（Paraformer 薄封装）· sherpa_kws（KWS 唤醒）
+│                      tts（统一入口：本地 Kokoro → 其它本地 → 云端）· edge_tts_engine（云端+熔断）
+│                      sherpa_tts（三套本地音色：Matcha / Kokoro / VITS）
+│                      tts（统一入口）· tts_cache（合成缓存）· features（语速）· convert（转 16k WAV）
+├── display/           设备小屏：face（像素表情引擎）· state（表情/页面/对话状态）
+│                      render（三页排版）· outputs（fbdev/SPI/无硬件）· service（渲染线程）
+├── hardware/          __init__（自动探测）· real · mock · display_gc9a01
+└── web/static/        index.html + css/style.css + js/{api,dialogue,camera,report,settings,main}.js
+```
+
+**性能设计**：感知模型全进程单例（只加载一份）；视觉四线程互不阻塞（帧 24fps / 手口 1.2s /
+感知 4fps / GLM-4V 10s）；ASR 走本地模型无网络往返；对话 SSE 分句推送 + TTS 独立有序队列
+（AI 生成不被语音合成阻塞，音频按句序播放）。摄像头帧在服务内即原始 JPEG 字节，
+MJPEG 流零 base64 往返、零 analysis 构建，轮询快照只含分析结果（~1KB）。
+
+## 七、主要 API
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/health` | 健康检查 |
+| GET | `/api/vision/snapshot` | 全部分析卡片（轻量 JSON，不含帧） |
+| GET | `/api/vision/stream` | MJPEG 视频流 |
+| GET | `/api/vision/frame` | 最新一帧 JPEG（非流式） |
+| POST | `/api/vision/start` / `stop` | 启停摄像头 |
+| GET/POST | `/api/vision/emotion` | 读取/设置机器人表情 |
+| POST | `/api/dialogue/stream` | **SSE 流式对话**（reply/audio/done） |
+| POST | `/api/dialogue` | 非流式对话（含 `[EMOTION:x]` 解析） |
+| POST | `/api/asr` | 上传音频 → 本地识别文本（Paraformer） |
+| POST | `/api/tts` | 文本 → base64 音频 |
+| GET | `/api/report` / `/api/analytics` / `/api/personal-doc` | 周报 / 完整分析 / 个性文档 |
+| GET/POST | `/api/config` | AI 配置（前端视图不含密钥） |
+| GET | `/api/food/database` | 55 种中餐热量库 |
+| POST | `/api/food/identify` | 拍照识别食物热量（GLM-4V） |
+| GET | `/api/device/screen.png` | **设备小屏当前画面**（PNG，网页镜像用） |
+| GET/POST | `/api/device/page` | 读取 / 切换设备屏页面（`next` 为循环切换） |
+| POST | `/api/device/listen` | 通知设备屏进入/退出「倾听」 |
+| GET/POST | `/api/agent/settings` | 第一页下滑面板设置（模式/自主互动/亮度/音量/语音唤醒） |
+| GET | `/api/agent/proactive` | **SSE**：AI 主动互动事件（文本 + 语音 + 表情） |
+| GET | `/api/agent/wake` | 语音唤醒状态（开关/模式/唤醒词/命中统计/最近听到的内容） |
+| GET | `/api/agent/wake/ack` | 唤醒应答语音（「我在」，缓存秒回） |
+| POST | `/api/agent/wake/feed` | **唤醒判定**：上传 16k 单声道 PCM，返回是否命中唤醒词 |
+| POST | `/api/agent/wake/reset` | 丢弃唤醒识别会话（页面卸载/切换模式时） |
+
+交互式文档：`http://<host>:8765/api/docs`
+
+## 八、安全提示
+
+- API Key 仅加密落盘，切勿把 `ai_config.key` 与 `ai_config.json` 一并外发。
+- 旧项目 `mindful_pi` 曾以明文保存过 API Key，**建议到智谱控制台重置该 Key**。
+- 本项目不迁移旧项目任何配置文件，需重新配置。
+
+## 九、许可与致谢
+
+- 情绪模型 HSEmotion（enet_b0_8_va_mtl）、FER+、YuNet 人脸检测、MediaPipe FaceMesh/HandLandmarker
+- 语音：**[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)（k2-fsa）** —— 唤醒用 KWS zipformer 中文关键词模型
+  （`sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01`）、识别用 Paraformer 中文小模型、
+  合成用三套可选音色（默认 `matcha-icefall-zh-baker` + `vocos-22khz-univ` 声码器，
+  另有 `kokoro-int8-multi-lang-v1_1`、`matcha-icefall-zh-baker`（非商用）与旧的
+  `vits-zh-hf-fanchen-C`）；Kokoro 权重 Apache-2.0，是本项目**唯一明确可商用**的音色；
+  `pypinyin` 用于把唤醒词转成 KWS 的拼音 token
+  （旧的 Vosk 与 edge-tts 依赖已移除）
+- 商业背景见 `docs/商业计划书要点.md`

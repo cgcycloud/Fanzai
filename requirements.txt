@@ -1,0 +1,43 @@
+# 正念饭崽（mindful_meal）通用依赖 —— Windows 本地与树莓派共用
+#
+# ⚠️ 版本都锁死了，别放宽（尤其是 mediapipe / numpy / opencv 这三个）：
+#   - mediapipe 1.0.x 和 0.10.30+ 删除了本项目在用的 solutions 旧 API，
+#     且 1.0.x 在部分电脑上初始化直接崩溃；带 solutions 的最后版本是 0.10.21。
+#   - mediapipe 0.10.21 只发布了 Python 3.9~3.12 的轮子，**必须用 Python 3.12 或更低**
+#     （run.bat 已保证）。
+#   - mediapipe 0.10.21 要求 numpy<2；opencv-python 5.x 要求 numpy>=2，两者互斥，
+#     所以 opencv 锁在 4.10.x、numpy 锁在 1.26.x。
+fastapi>=0.110.0
+uvicorn>=0.29.0
+requests>=2.28.0
+cryptography>=39.0.0
+
+# 感知模型（表情 + 咀嚼）
+onnxruntime>=1.14.0
+mediapipe==0.10.21
+opencv-python==4.10.0.84
+numpy==1.26.4
+
+# 发声（TTS）：云端 Qwen3-TTS-Flash（阿里云百炼 / DashScope）
+#   走标准 HTTP 接口（requests 即可），**不需要** dashscope SDK；
+#   端点 / 模型 / 音色 / 语种 / API Key 在网页设置页配置，
+#   实现在 app/voice/qwen_tts_engine.py。
+#   旧的 edge-tts 与本地 sherpa 音色（Kokoro/Matcha/VITS/Piper）已全部移除。
+
+# 语音（唤醒 + 识别走 sherpa-onnx / k2-fsa，本地离线）
+#   唤醒 KWS：sherpa-onnx-kws-zipformer-wenetspeech-3.3M（中文关键词，拼音建模单元）
+#   识别 ASR：sherpa-onnx-paraformer-zh-small（15.9 秒语音解码 0.26 秒）
+# 模型下载：python -m tools.download_models && python tools/download_sherpa_models.py
+# 旧的 Vosk（识别回退 + 唤醒）已由 sherpa KWS/Paraformer 取代。
+sherpa-onnx>=1.10.0
+# 唤醒词 → KWS 拼音 token（「你好饭崽」→ n ǐ h ǎo f àn z ǎi）
+pypinyin>=0.51.0
+sounddevice>=0.4.0
+soundfile>=0.10.0
+# 注意：pydub 依赖的 audioop 在 Python 3.13 已被移除，本项目改用 numpy 自研转码
+# ffmpeg 为可选项：仅当需要识别 webm/opus/mp3 等压缩音频时才需要系统安装
+
+# 开发/测试
+pytest>=7.0.0
+httpx>=0.27.0          # FastAPI TestClient 冒烟测试
+python-multipart>=0.0.9

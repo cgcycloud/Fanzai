@@ -1,0 +1,213 @@
+/* 设备屏（2.8 寸横屏仿真）：表情页 = Web Component；详细页 = 服务端 MJPEG */
+:root { --bg: #070b0a; --ink: #e8efe9; --muted: #7f8d86; --accent: #2f9e6e; --line: #26302b; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: radial-gradient(circle at 50% 30%, #101715 0%, var(--bg) 70%);
+  color: var(--ink); overflow: hidden; user-select: none;
+  font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; font-size: 14px;
+}
+
+#stage { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+
+#device {
+  position: relative; padding: 14px; border-radius: 22px;
+  background: linear-gradient(#222a26, #141917);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, .65), inset 0 0 0 1px #333c37;
+  touch-action: none; cursor: pointer;
+  width: min(94vw, 960px);
+}
+#faceLayer, #screen, #reportPage {
+  width: 100%; aspect-ratio: 640 / 480; border-radius: 12px; background: #000;
+  overflow: hidden;
+  -webkit-user-drag: none;
+}
+#faceLayer { position: relative; display: flex; flex-direction: column; }
+/* 亮度只调暗内容，设置面板本身保持可读 */
+#faceLayer agent-robot-avatar, #faceLayer #dlgBox, #faceLayer #metricsRow {
+  filter: brightness(var(--dim, 1));
+}
+#faceLayer agent-robot-avatar {
+  flex: 1; min-height: 0;
+  width: min(72%, 430px); height: auto; margin: auto;   /* 由 ResizeObserver 自适应 */
+}
+#dlgBox {
+  max-height: 30%; overflow-y: auto; padding: 10px 16px 4px;
+  font-size: clamp(11px, 2.2vh, 15px); line-height: 1.5;
+  scrollbar-width: thin;
+}
+#clockRow {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding: 8px 16px 2px; color: var(--muted);
+  font-size: clamp(11px, 2vh, 14px);
+}
+#clockRow b { color: var(--ink); font-size: clamp(15px, 2.8vh, 20px); letter-spacing: 1px; }
+#dlgBox .u { color: var(--muted); }
+#dlgBox .a { color: var(--ink); }
+#dlgBox .empty { color: var(--muted); }
+#metricsRow {
+  display: flex; flex-wrap: wrap; gap: 4px 18px;
+  padding: 6px 16px 12px; font-size: clamp(10px, 2vh, 14px);
+}
+#metricsRow span { color: var(--ink); }
+#metricsRow #mEmotion { margin-left: auto; }
+
+#screen { display: block; }
+#faceLayer[hidden], #screen[hidden], #reportPage[hidden] { display: none !important; }
+
+/* 下滑设置面板：整页铺满 + 黑白配色 */
+#sheet {
+  position: absolute; inset: 0; z-index: 20; border-radius: 12px;
+  background: #000; color: #fff; border: 1px solid #3a3a3a;
+  display: flex; flex-direction: column; padding: 16px 22px 20px;
+  touch-action: auto; cursor: default;
+}
+#sheet[hidden] { display: none; }
+.sheetHead {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 16px;
+}
+.sheetHead span { font-size: 20px; letter-spacing: 1px; }
+.sheetHead small { color: #9a9a9a; font-size: 12px; }
+.sheetHead button {
+  margin-left: auto; background: #fff; color: #000; border: none; border-radius: 9px;
+  padding: 7px 18px; font-size: 14px; cursor: pointer; font-family: inherit;
+}
+.sheetBody { display: flex; flex-direction: column; gap: 14px; }
+.sheetBody .row { display: flex; align-items: center; gap: 14px; }
+.sheetBody .row.col { flex-direction: column; align-items: stretch; gap: 8px; }
+.sheetBody .k { color: #d2d2d2; font-size: 15px; min-width: 78px; }
+.sheetBody .k small { color: #8f8f8f; margin-left: 8px; font-size: 12px; }
+.sheetBody b { color: #fff; font-size: 15px; min-width: 46px; text-align: right; }
+.sheetBody input[type=range] { flex: 1; height: 22px; accent-color: #fff; }
+.seg { display: flex; gap: 8px; }
+.seg button {
+  flex: 1; padding: 9px 6px; border-radius: 9px; cursor: pointer;
+  background: #000; color: #fff;
+  border: 1px solid #6a6a6a; font-family: inherit; font-size: 14px;
+}
+.seg button.on { background: #fff; color: #000; border-color: #fff; }
+/* 语音播报关掉时，"唤醒后 单句/连续"整组禁用（灰色不可点） */
+.seg.off button, .seg button:disabled { opacity: .4; cursor: not-allowed; }
+/* 语音唤醒开关：黑白配色，与 .seg 保持一致 */
+.switch { position: relative; width: 50px; height: 28px; flex: none; margin-left: auto; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch i {
+  position: absolute; inset: 0; border-radius: 999px;
+  background: #2a2a2a; border: 1px solid #6a6a6a; transition: background .18s, border-color .18s;
+}
+.switch i::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 22px; height: 22px;
+  border-radius: 50%; background: #bdbdbd; transition: transform .18s, background .18s;
+}
+.switch input:checked + i { background: #fff; border-color: #fff; }
+.switch input:checked + i::after { transform: translateX(22px); background: #111; }
+.timeSet { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.timeSet input {
+  width: 54px; padding: 8px 4px; text-align: center; font-family: inherit;
+  font-size: 15px; background: #111; color: #fff;
+  border: 1px solid #6a6a6a; border-radius: 7px;
+}
+.timeSet i { color: #8f8f8f; font-style: normal; font-size: 12px; }
+.timeSet button {
+  padding: 9px 16px; border-radius: 9px; cursor: pointer; font-family: inherit;
+  font-size: 14px; background: #fff; color: #000; border: 1px solid #fff;
+}
+.timeSet button.ghost { background: #000; color: #fff; border-color: #6a6a6a; }
+
+#loading {
+  position: absolute; inset: 14px; display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-size: 13px; pointer-events: none; background: #000;
+  border-radius: 12px;
+}
+#loading.hide { display: none; }
+
+#pageDots {
+  position: absolute; top: 10px; right: 24px; display: flex; gap: 8px; z-index: 5;
+}
+#pageDots i { width: 9px; height: 9px; border-radius: 50%; background: #3a453f; cursor: pointer; }
+#pageDots i.on { background: var(--accent); }
+
+#hintBar { font-size: 12px; color: var(--muted); }
+#hintBar a { color: var(--accent); text-decoration: none; }
+#runStatus { margin-left: 12px; }
+#runStatus.ok { color: var(--accent); }
+#runStatus.err { color: #e0837f; }
+
+button.primary {
+  background: var(--accent); color: #fff; border: none; border-radius: 8px;
+  padding: 9px 16px; font-size: 14px; cursor: pointer; font-family: inherit;
+}
+
+/* ---------------- 健康报告覆盖层 ---------------- */
+#hintBar button {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--accent); font-family: inherit; font-size: 12px;
+}
+#hintBar button:hover { text-decoration: underline; }
+
+/* 第三页 = 健康报告（整页 DOM，不再是底部按钮弹出来的覆盖层）
+   注意**必须是参与布局的普通块**：设备框的高度由子元素的 640/480 比例撑起，
+   用 position:absolute 会让孩子不占位、切到这一页时整个设备框塌掉（实测塌到 28px）。 */
+#reportPage {
+  display: flex; flex-direction: column;
+  background: #0d1211;
+}
+.rpHead {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
+  background: #111817;
+}
+.rpTitle { font-size: 16px; color: var(--ink); letter-spacing: 1px; }
+.rpTabs { display: flex; gap: 6px; margin-left: auto; }
+.rpTabs button {
+  padding: 7px 14px; border-radius: 9px; cursor: pointer; font-family: inherit;
+  font-size: 13px; background: transparent; color: var(--muted);
+  border: 1px solid var(--line);
+}
+.rpTabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.rpHead .ghost {
+  padding: 7px 14px; border-radius: 9px; cursor: pointer; font-family: inherit;
+  font-size: 13px; background: transparent; color: var(--ink); border: 1px solid var(--line);
+}
+.rpBody {
+  padding: 18px; overflow-y: auto; color: var(--ink); flex: 1;
+  font-size: 13px; line-height: 1.65;
+}
+.rpBody h1 { font-size: 17px; margin: 4px 0 10px; }
+.rpBody h2 { font-size: 15px; margin: 16px 0 8px; color: var(--accent); }
+.rpBody h3 { font-size: 14px; margin: 16px 0 8px; color: var(--ink); }
+.rpBody p { margin: 6px 0; }
+.rpBody ul { margin: 6px 0 6px 20px; }
+.rpBody li { margin: 3px 0; }
+.rpBody .muted { color: var(--muted); }
+.rpBody .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 10px 0 4px; }
+.rpBody .kpi {
+  background: #121a18; border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px; text-align: center;
+}
+.rpBody .kpi b { display: block; font-size: 20px; color: var(--accent); }
+.rpBody .kpi span { font-size: 12px; color: var(--muted); }
+.rpBody .bar { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.rpBody .bar .lbl { width: 76px; color: var(--muted); font-size: 12px; }
+.rpBody .bar .track { flex: 1; height: 8px; background: #1b2422; border-radius: 4px; overflow: hidden; }
+.rpBody .bar .fill { height: 100%; background: var(--accent); }
+.rpBody .bar .num { width: 40px; text-align: right; color: var(--muted); font-size: 12px; }
+.rpBody .citem {
+  background: #121a18; border: 1px solid var(--line);
+  border-left: 3px solid #d9a441; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+}
+.rpBody .citem .t { color: #d9a441; font-size: 12px; }
+.rpBody .citem .d { font-weight: 600; margin: 4px 0; }
+.rpBody .citem .s { color: var(--muted); font-size: 12px; }
+.rpBody .empty { color: var(--muted); }
+@media (max-width: 760px) {
+  .rpHead { padding: 10px 12px; gap: 8px; }
+  .rpTitle { display: none; }
+  .rpTabs { margin-left: 0; }
+  .rpTabs button { padding: 6px 10px; font-size: 12px; }
+  .rpBody { padding: 12px; font-size: 12px; }
+}
+@media (max-width: 760px) {
+  #device { width: 96vw; }
+}

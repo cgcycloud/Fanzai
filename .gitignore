@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+data_local/
+*.log
+*.pid
+*.wav
+*.mp3
+*.onnx
+!.gitignore
+models/vosk-model-small-cn-0.22/
+.DS_Store
+.pytest_cache/

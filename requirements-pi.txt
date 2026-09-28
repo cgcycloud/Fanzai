@@ -1,0 +1,18 @@
+# 正念饭崽 —— 树莓派真机部署额外依赖
+# 安装: sudo pip3 install -r requirements-pi.txt
+# 系统包建议: sudo apt install python3-lgpio python3-gpiozero python3-picamera2 python3-opencv
+
+# 发声（TTS）：云端 Qwen3-TTS-Flash（阿里云百炼）。
+# 走标准 HTTP 接口，requests 已在通用依赖里，**无需额外包**；
+# 树莓派需保证联网，API Key 在网页设置页填写。
+# 旧的 edge-tts 与本地 sherpa 音色已全部移除。
+
+# 语音识别（Paraformer int8，树莓派可跑；sherpa-onnx 提供 aarch64 轮子）
+sherpa-onnx>=1.10.0
+
+# 树莓派硬件
+lgpio>=0.2.0
+gpiozero>=1.6.0
+
+# 摄像头（picamera2 建议用系统包，此处为 pip 备选）
+# picamera2

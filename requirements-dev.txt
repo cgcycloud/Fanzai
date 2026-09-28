@@ -1,0 +1,5 @@
+# 开发/测试依赖（部署到树莓派时不需要）
+-r requirements.txt
+pytest>=7.0.0
+httpx>=0.27.0          # FastAPI TestClient
+playwright>=1.40.0     # 真实浏览器 GUI 验收（用系统 Edge，无需下载浏览器）

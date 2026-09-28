@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>正念饭崽 · 设备屏</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/css/device_ui.css?v=20260916c">
+</head>
+<body>
+<!-- 整屏就是这块 2.8 寸屏：
+     ① 表情页 = agent-robot-avatar 组件（DOM/SVG）
+     ② 摄像头页 = 服务端渲染的 MJPEG 实况（可上下滑动）
+     ③ 健康报告页 = 本页 DOM 直接渲染（周报/完整分析/个性文档三个标签）-->
+<div id="stage">
+  <div id="device">
+    <!-- ① 表情主页（DOM 层） -->
+    <div id="faceLayer">
+      <div id="clockRow"><span id="clkDate">—</span><b id="clkTime">--:--</b></div>
+      <agent-robot-avatar id="avatar" color="#e9f1ee"
+                          auto-sleep="45000" wake-on="activity"></agent-robot-avatar>
+      <div id="dlgBox"></div>
+      <div id="metricsRow">
+        <span id="mChew">咀嚼 —</span>
+        <span id="mChewCount">累计 — 次</span>
+        <span id="mEat">进食 —</span>
+        <span id="mEmotion">情绪 —</span>
+      </div>
+      <!-- 下滑设置面板：亮度 / 音量 / 运行模式 / 自主互动 -->
+      <div id="sheet" hidden>
+        <div class="sheetHead"><span>设置</span><small>上滑返回</small>
+          <button id="sheetClose" type="button">完成</button></div>
+        <div class="sheetBody">
+          <div class="row">
+            <span class="k">亮度</span>
+            <input id="setBright" type="range" min="20" max="100" step="5" value="100">
+            <b id="valBright">100</b>
+          </div>
+          <div class="row">
+            <span class="k">音量</span>
+            <input id="setVolume" type="range" min="0" max="100" step="5" value="70">
+            <b id="valVolume">70</b>
+          </div>
+          <div class="row">
+            <span class="k">AI语速</span>
+            <input id="setRate" type="range" min="-50" max="50" step="5" value="0">
+            <b id="valRate">0%</b>
+          </div>
+          <div class="row col">
+            <span class="k">模式 <small id="modeDesc"></small></span>
+            <div class="seg" id="modeSeg"></div>
+          </div>
+          <div class="row col">
+            <span class="k">自主互动 <small id="autoDesc"></small></span>
+            <div class="seg" id="autoSeg"></div>
+          </div>
+          <div class="row">
+            <span class="k">语音唤醒 <small id="wakeWords"></small></span>
+            <label class="switch"><input id="setWake" type="checkbox"><i></i></label>
+          </div>
+          <div class="row">
+            <span class="k">语音播报 <small id="ttsDesc">关掉后只出文字不出声</small></span>
+            <label class="switch"><input id="setTts" type="checkbox"><i></i></label>
+          </div>
+          <div class="row col">
+            <span class="k">唤醒后 <small id="wakeDesc"></small></span>
+            <div class="seg" id="wakeSeg"></div>
+          </div>
+          <div class="row col">
+            <span class="k">时间校准 <small id="valClock"></small></span>
+            <div class="timeSet" id="clockSeg">
+              <input id="setMon" type="number" min="1" max="12" inputmode="numeric"><i>月</i>
+              <input id="setDay" type="number" min="1" max="31" inputmode="numeric"><i>日</i>
+              <input id="setHour" type="number" min="0" max="23" inputmode="numeric"><i>时</i>
+              <input id="setMin" type="number" min="0" max="59" inputmode="numeric"><i>分</i>
+              <input id="setSec" type="number" min="0" max="59" inputmode="numeric"><i>秒</i>
+              <button id="clockApply" type="button">应用</button>
+              <button id="clockReset" class="ghost" type="button">跟随系统</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ②③ 详细页（服务端渲染流）-->
+    <img id="screen" hidden alt="设备屏幕" draggable="false">
+    <!-- ③ 第三页 = 健康报告（原来挂在底部按钮上的覆盖层，现在就是这一页） -->
+    <div id="reportPage" hidden>
+      <div class="rpHead">
+        <span class="rpTitle">健康报告</span>
+        <div class="rpTabs" id="rpTabs">
+          <button type="button" data-tab="week" class="on">健康周报</button>
+          <button type="button" data-tab="analysis">完整健康分析</button>
+          <button type="button" data-tab="doc">我的个性文档</button>
+        </div>
+        <button id="rpReload" class="ghost" type="button">刷新</button>
+      </div>
+      <div class="rpBody" id="rpBody"></div>
+    </div>
+    <div id="loading">正在连接设备屏…</div>
+    <div id="pageDots"></div>
+  </div>
+  <div id="hintBar">说「你好饭崽」唤醒 · 轻触说话 · 下滑设置 · 左右滑动切页
+    <span id="runStatus"></span>
+  </div>
+</div>
+
+<script type="module" src="/static/vendor/agent-robot-avatar/agent-robot-avatar.js"></script>
+<script>
+/* 兜底：主脚本若没跑起来（脚本加载失败 / 服务没起 / 报错），
+   不要把用户永远晾在「正在连接设备屏…」上 — 直接给出可操作的提示。
+   device_ui.js 的 init() 一开始就会把 __dshBooted 置为 true。*/
+window.__dshBooted = false;
+setTimeout(function () {
+  if (window.__dshBooted) return;
+  var el = document.getElementById('loading');
+  if (!el) return;
+  el.classList.remove('hide');
+  el.innerHTML = '页面脚本没能加载 — 请按 <b>Ctrl+F5</b> 强制刷新。<br>'
+    + '<small>若刷新后仍是这样：说明后端服务没起来，请看启动窗口里的报错'
+    + '（常见原因是端口 8765 被占用，或模型文件缺失）。</small>';
+}, 6000);
+</script>
+<script src="/static/js/device_ui.js?v=20260916c"></script>
+</body>
+</html>
